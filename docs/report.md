@@ -107,14 +107,42 @@ The activation-weighted weight-MSE proxy correlates with the *real* layer-output
 real output jump for many layers (the scatter sits below `y = x`). The proxy is a reasonable, cheap
 stand-in but not a substitute for measuring actual output error.
 
+### 4.6 Implementing AWQ scaling: where does activation-aware protection actually help?
+
+The experiments above compute AWQ-style importance but quantize with plain RTN — i.e. they never
+*use* the importance. So we close the loop and implement AWQ's actual mechanism: a per-input-channel
+scaling `s = (mean|x|)^α` (mean-normalized) applied as `Ŵ = quant(W·diag(s))·diag(1/s)`, with `α`
+grid-searched per layer/bit to minimize output error (`α = 0` is exactly RTN, so AWQ can never be
+worse). We report the **3-bit output-error reduction** `RTN / AWQ` per layer.
+
+| Metric | Qwen2.5-1.5B | Qwen2.5-0.5B |
+|---|---|---|
+| median reduction (all layers) | 1.17× | 1.15× |
+| max reduction (single layer) | **25.9×** (`L2.mlp.down_proj`) | **28.9×** |
+| mean reduction, `down_proj` | **2.31×** | ~2.3× |
+| mean reduction, `o_proj` | **1.63×** | ~2.3× |
+| mean reduction, other 5 families | 1.13–1.27× | ~1.2× |
+| per-layer Spearman ρ(κ, reduction) | 0.04 (n.s.) | 0.06 (n.s.) |
+
+The story is **categorical, not per-layer**: AWQ rescues *exactly* the two high-kurtosis families
+(`down_proj`, `o_proj`) and barely touches the low-outlier families — a clean, **positive**
+confirmation of AWQ's core thesis. The per-layer rank correlation with kurtosis is ~0 only because
+~5/7 of all layers are low-outlier families that form a flat blob with no internal signal; the
+top-8 layers by AWQ benefit are *all* `down_proj`/`o_proj`. This is also the answer to "why RTN?":
+RTN is the fixed, assumption-free baseline, and AWQ is measured *relative to it*.
+
 ## 5. Findings (summary)
 
 1. AWQ saliency concentration is real and reproducible.
 2. Activation outliers are heavy (κ up to ~12) and concentrated in `o_proj` / `down_proj`.
 3. The 4→3 bit transition is **smooth** — no layer exceeds the 5× phase-transition threshold.
+   (And note: median jump ≈ 3.9× is essentially the analytic ~4×/bit scaling of uniform-quant MSE
+   — see §7 — so this metric *cannot by construction* show a phase transition.)
 4. **Kurtosis predicts the low-bit error *level* (ρ≈+0.55) but not the 4→3 *jump* (ρ≈−0.36).**
 5. Both (3) and (4) **replicate** on a second model size (Qwen2.5-0.5B).
 6. The cheap proxy moderately tracks the real layer-output error (ρ≈0.62).
+7. Implemented AWQ scaling cuts 3-bit error ~2× on the outlier families (up to 25.9× for one
+   layer), ~1.2× elsewhere — activation-aware protection helps *exactly* where the outliers are.
 
 ## 6. Interpretation
 
@@ -127,10 +155,20 @@ absorbed by the residual stream and normalization as it flows downstream.
 
 ## 7. Limitations
 
+- **The jump-ratio metric is dominated by an analytic constant.** Uniform-quantization MSE scales
+  as `4^(−bits)`, so *every* layer's error multiplies by ≈4× per bit dropped, independent of its
+  distribution. The measured per-bit ratios confirm this almost exactly (8→6→4→3→2 give
+  4.00 / 3.99 / 3.92 / 3.65× per bit). This means the layer-local RTN proxy **cannot, by
+  construction, reveal a phase transition** — a true transition would only appear in *model-level*
+  metrics (perplexity / logit KL). The smooth "no >5× jump" result should be read in that light.
 - One architecture family (Qwen2.5), two sizes — no claim of generality to Llama/Gemma/Phi.
 - Proxy and output error are **layer-local**; neither is end-task quality (perplexity / accuracy).
-- Small calibration set (4 paragraphs).
-- No comparison to a real AWQ scale-search or GPTQ baseline — this is a diagnostic, not a method.
+- **Kurtosis is a 4th-moment estimate** from a small calibration set (4 paragraphs, a few hundred
+  tokens/layer) — inherently high-variance, so the exact correlation values are indicative, not tight.
+- **Simplified quantizer.** The base is symmetric per-output-channel RTN (a deliberate fixed probe).
+  The AWQ pass adds activation-aware scaling but is not the full deployed AWQ (group-wise +
+  asymmetric + folded scales), and there is no GPTQ baseline — absolute error magnitudes are not
+  comparable to production AWQ/GPTQ.
 
 ## 8. Next steps
 

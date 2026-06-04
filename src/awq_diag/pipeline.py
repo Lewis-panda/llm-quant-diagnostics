@@ -13,7 +13,7 @@ from . import plotting
 from .analysis import build_layer_records, build_summary
 from .config import DiagConfig
 from .data import get_calibration_texts
-from .hooks import ActivationCollector
+from .hooks import ActivationCollector, AWQErrorCollector
 from .model_utils import (
     get_model_info,
     iter_block_linears,
@@ -79,13 +79,13 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
     set_seed(cfg.seed)
 
     if verbose:
-        print(f"[1/5] Loading {cfg.model_name} ...")
+        print(f"[1/6] Loading {cfg.model_name} ...")
     model, tokenizer, device = load_model_and_tokenizer(cfg.model_name, cfg.dtype, cfg.device)
     model_info = get_model_info(model)
 
     if verbose:
         print(f"      params={model_info['num_params']/1e9:.2f}B  layers={model_info['num_layers']}  device={device}")
-        print(f"[2/5] Registering hooks + running {len(get_calibration_texts())} calibration passes ...")
+        print(f"[2/6] Registering hooks + running {len(get_calibration_texts())} calibration passes ...")
     collector = ActivationCollector(model, cfg)
     n_hooks = collector.register()
     cal_tokens = _tokenize(tokenizer, get_calibration_texts(), cfg.max_calibration_length)
@@ -95,8 +95,17 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
         print(f"      {n_hooks} hooks fired; collected stats for {len(collector.stats)} layers")
 
     if verbose:
-        print("[3/5] Computing per-layer records + summary ...")
-    records = build_layer_records(model, collector, cfg)
+        print("[3/5] Second pass: AWQ scaling search (RTN vs activation-aware) ...")
+    act_scales = {n: collector.stats[n]["channel_magnitude"] for n in collector.stats}
+    awq_collector = AWQErrorCollector(model, cfg, act_scales)
+    awq_collector.register()
+    awq_collector.run_calibration(cal_tokens, device)
+    awq_collector.remove()
+    awq_results = awq_collector.finalize()
+
+    if verbose:
+        print("[4/6] Computing per-layer records + summary ...")
+    records = build_layer_records(model, collector, cfg, awq_results)
     summary = build_summary(records, cfg)
 
     result = {
@@ -127,7 +136,7 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
 
     if make_figures:
         if verbose:
-            print("[4/5] Rendering figures ...")
+            print("[5/6] Rendering figures ...")
         d = cfg.model_figures_dir
         d.mkdir(parents=True, exist_ok=True)
         plotting.plot_saliency_curve(_demo_importance_curves(model, collector), d / "saliency_curve.png")
@@ -136,7 +145,8 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
         plotting.plot_kurtosis_vs_jump(records, summary, d / "kurtosis_vs_jump_ratio.png")
         plotting.plot_module_family(summary, d / "module_family.png")
         plotting.plot_proxy_vs_output(records, summary, d / "proxy_vs_output_error.png")
-        n_fig = 6
+        plotting.plot_awq_reduction(records, summary, d / "awq_reduction.png")
+        n_fig = 7
         for mtype in ("down_proj", "o_proj"):  # the two highest-kurtosis families
             surf = _importance_surface(model, collector, mtype)
             if surf is not None:
@@ -149,7 +159,7 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
 
     if verbose:
         _print_headline(result)
-        print("[5/5] Done.")
+        print("[6/6] Done.")
     # free GPU memory so multi-model runs don't accumulate
     del model
     if torch.cuda.is_available():
@@ -167,4 +177,12 @@ def _print_headline(result: dict) -> None:
           f"max {pj['max']:.2f}x  (>5x: {pj['num_above_5x']})")
     print(f"  kurtosis vs jump Spearman ρ = {rho:.3f} (p={p:.1e})")
     print(f"  highest-kurtosis layer: {tk['name']} (κ={tk['mean_kurtosis']:.2f})")
+    if "awq_reduction_3bit" in s:
+        ar = s["awq_reduction_3bit"]
+        fam = s["module_family"]
+        outlier = [fam[m]["mean_awq_reduction_3bit"] for m in ("down_proj", "o_proj") if m in fam]
+        other = [fam[m]["mean_awq_reduction_3bit"] for m in fam if m not in ("down_proj", "o_proj")]
+        print(f"  AWQ 3-bit error reduction: median {ar['median']:.2f}x  max {ar['max']:.2f}x")
+        print(f"  AWQ helps outlier families most: down_proj/o_proj ~{np.mean(outlier):.2f}x "
+              f"vs others ~{np.mean(other):.2f}x")
     print("  ─────────────────────────────────────────────────────")

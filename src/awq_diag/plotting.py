@@ -166,6 +166,59 @@ def plot_module_family(summary: dict, path: Path) -> Path:
     return path
 
 
+def plot_awq_reduction(records: Dict[str, dict], summary: dict, path: Path) -> Path:
+    """Does activation-aware (AWQ) scaling help the high-kurtosis layers most?
+
+    Left: per-layer 3-bit output-error reduction (RTN / AWQ, >1 = AWQ wins) vs kurtosis.
+    Right: mean reduction by module family — the test of AWQ's core thesis.
+    """
+    names = list(records)
+    kurt = np.array([records[n]["mean_kurtosis"] for n in names])
+    red = np.array([records[n]["awq_reduction_3bit"] for n in names])
+    mtypes = [records[n]["module_type"] for n in names]
+    rho, pval = summary["correlations"]["kurtosis_vs_awq_reduction_spearman"]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    # highlight the two outlier families so the per-layer panel tells the story too
+    palette = {"down_proj": _RED, "o_proj": "darkorange"}
+    for fam_name, color, z in [("other", "lightsteelblue", 1),
+                               ("o_proj", "darkorange", 2), ("down_proj", _RED, 3)]:
+        mask = np.array([(m == fam_name) if fam_name != "other"
+                         else (m not in palette) for m in mtypes])
+        if mask.any():
+            ax1.scatter(kurt[mask], red[mask], s=42, alpha=0.85, zorder=z,
+                        color=color, edgecolors="gray", linewidth=0.4,
+                        label=fam_name if fam_name != "other" else "other families")
+    ax1.set_yscale("log")
+    ax1.axhline(1.0, color="gray", linestyle="--", alpha=0.6)
+    ax1.set_xlabel("mean excess kurtosis")
+    ax1.set_ylabel("AWQ 3-bit output-error reduction  (RTN / AWQ, ×, log)")
+    ax1.set_title("Where does activation-aware scaling help?")
+    ax1.text(0.05, 0.95,
+             f"per-layer Spearman ρ = {rho:.3f} (p={pval:.1e})\n"
+             f"→ weak per-layer, but concentrated\n   in the outlier families →",
+             transform=ax1.transAxes, va="top",
+             bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.6))
+    ax1.legend(loc="lower right")
+
+    fam = summary["module_family"]
+    order = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    order = [m for m in order if m in fam] + [m for m in fam if m not in order]
+    vals = [fam[m]["mean_awq_reduction_3bit"] for m in order]
+    colors = [_RED if v > np.median(vals) else _BLUE for v in vals]
+    x = np.arange(len(order))
+    ax2.bar(x, vals, color=colors, alpha=0.85)
+    ax2.axhline(1.0, color="gray", linestyle="--", alpha=0.6)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(order, rotation=30, ha="right")
+    ax2.set_ylabel("mean 3-bit error reduction (×)")
+    ax2.set_title("AWQ benefit by module family")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def plot_importance_surface_3d(
     matrix: np.ndarray,
     channel_index: np.ndarray,

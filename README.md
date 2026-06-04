@@ -41,11 +41,18 @@ Measured on `Qwen/Qwen2.5-1.5B` and replicated on `Qwen/Qwen2.5-0.5B`:
 | Does kurtosis predict the **jump**? | Spearman ρ(κ, jump) | **−0.36** (1.5B), **−0.26** (0.5B) | ❌ negative — it does not |
 | Does kurtosis predict the **error level**? | Spearman ρ(κ, 3-bit error) | **+0.55** (1.5B), **+0.51** (0.5B) | ✅ yes — different thing! |
 | Does the cheap proxy track real output error? | Spearman ρ(proxy jump, output jump) | **+0.62** (1.5B), **+0.66** (0.5B) | ⚠️ partially |
+| Does AWQ-style scaling help the outlier layers? | 3-bit output-error reduction by family | `down_proj`/`o_proj` **~2.0–2.3×** vs others **~1.2×** (max **25.9×**) | ✅ AWQ rescues exactly the outlier families |
 
 **The one-line takeaway:** *kurtosis explains the **level** of low-bit error (outliers raise the
 floor), but not the **sensitivity** to bit reduction (the 4→3 jump is uniform across layers).*
 Low-bit failure is therefore unlikely to be a pure single-layer-statistics phenomenon — which
 points the next investigation toward **inter-layer error propagation**.
+
+We also *implement* AWQ's activation-aware scaling (not just describe it): a per-input-channel
+scaling search that protects salient channels before quantizing. It cuts the 3-bit output error
+of `down_proj`/`o_proj` by ~2× on average (up to **25.9×** for one layer) while barely helping the
+low-outlier families — a clean, **positive** confirmation of AWQ's core thesis at the module-family
+level, even though per-layer kurtosis is too noisy to rank within the dominant low-outlier families.
 
 ---
 
@@ -62,6 +69,11 @@ points the next investigation toward **inter-layer error propagation**.
 | Module-family breakdown | Proxy vs real output error |
 |---|---|
 | ![family](figures/Qwen2.5-1.5B/module_family.png) | ![pvo](figures/Qwen2.5-1.5B/proxy_vs_output_error.png) |
+
+**AWQ vs RTN** — implementing AWQ's activation-aware scaling and measuring where it helps. The
+outlier families (`o_proj`, `down_proj`) are rescued the most; the low-outlier families barely move:
+
+![awq](figures/Qwen2.5-1.5B/awq_reduction.png)
 
 **Activation-aware importance across depth** — the classic outlier-channel surface
 (`x` = input channel, `y` = layer, `z` = AWQ importance `|W|·|x|`). The spiky towers are
@@ -97,6 +109,10 @@ per-output-channel weight quantization:
 - **proxy error** — activation-weighted weight MSE (cheap; weights + activation magnitude only).
 - **output error** — the *real* relative layer-output error `‖Wx − Ŵx‖ / ‖Wx‖` measured on the
   actual calibration activations (the "ground truth" the proxy is checked against).
+
+A second pass then runs an **AWQ scaling search**: for each layer/bit it grid-searches the
+per-input-channel scaling exponent `s = (mean|x|)^α` that minimizes output error (α=0 is exactly
+plain RTN), and reports how much that activation-aware protection beats RTN per layer.
 
 See [`docs/report.md`](docs/report.md) for the full method, math, and interpretation.
 
@@ -186,20 +202,22 @@ original notebook's headline numbers (median 3.92× jump, ρ = −0.360, top-κ 
   "summary": {
     "proxy_jump_4to3":  { "min": .., "median": .., "mean": .., "max": .., "num_above_5x": 0 },
     "output_jump_4to3": { ... },
+    "awq_reduction_3bit": { "min": 1.0, "median": .., "max": 25.85, ... },
     "correlations": {
       "kurtosis_vs_proxy_jump_spearman":        [-0.360, 2.2e-07],
       "kurtosis_vs_3bit_proxy_error_spearman":  [ 0.553, 4.1e-17],
-      "proxy_jump_vs_output_jump_spearman":     [ 0.623, 1.8e-22]
+      "proxy_jump_vs_output_jump_spearman":     [ 0.623, 1.8e-22],
+      "kurtosis_vs_awq_reduction_spearman":     [ 0.038, 6.0e-01]
     },
-    "module_family": { "down_proj": { "mean_kurtosis": .., "mean_proxy_jump": .., ... }, ... }
+    "module_family": { "down_proj": { "mean_kurtosis": .., "mean_awq_reduction_3bit": 2.31, ... }, ... }
   },
   "layers": {
     "model.layers.0.self_attn.q_proj": {
       "module_type": "q_proj", "layer_idx": 0,
       "mean_kurtosis": .., "top1pct_importance_share": ..,
       "proxy_error":  { "8": .., "4": .., "3": .., "2": .. },
-      "output_error": { ... },
-      "proxy_jump_4to3": .., "output_jump_4to3": ..
+      "output_error": { ... }, "awq_output_error": { ... },
+      "proxy_jump_4to3": .., "output_jump_4to3": .., "awq_reduction_3bit": .., "awq_best_alpha": {..}
     }
   },
   "jump_ratios": { ... },   // backward-compatible flat views from the original notebook
@@ -217,7 +235,11 @@ original notebook's headline numbers (median 3.92× jump, ρ = −0.360, top-κ 
   The proxy↔output comparison is a first step toward closing that gap, but it stops at layer output.
 - **Small calibration set** (4 paragraphs) — enough to characterize per-channel distributions, not
   to make distributional claims about rare events.
-- **No comparison to a real AWQ scale search / GPTQ baseline.** This is a *diagnostic*, not a method.
+- **Simplified quantizer.** The base is symmetric per-output-channel RTN (chosen deliberately as a
+  fixed, assumption-free probe so cross-layer differences reflect the *layer*, not an optimizer).
+  The AWQ pass adds activation-aware scaling on top, but it is *not* the full deployed AWQ
+  (group-wise + asymmetric zero-point + folded scales) and there is no GPTQ baseline — so absolute
+  error magnitudes are not comparable to production AWQ/GPTQ numbers.
 
 ## Next steps
 

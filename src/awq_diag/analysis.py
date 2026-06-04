@@ -30,6 +30,7 @@ def build_layer_records(
     model: nn.Module,
     collector: ActivationCollector,
     cfg: DiagConfig,
+    awq_results: Dict[str, dict] | None = None,
 ) -> Dict[str, dict]:
     """One record per analyzed Linear layer."""
     records: Dict[str, dict] = {}
@@ -44,7 +45,7 @@ def build_layer_records(
         acc = collector.output_acc[name]
         output = output_error_from_accumulators(acc["num"], acc["den"])
 
-        records[name] = {
+        rec = {
             "module_type": module_type_from_name(name),
             "layer_idx": layer_idx_from_name(name),
             "hidden_dim": int(s["hidden_dim"]),
@@ -58,6 +59,18 @@ def build_layer_records(
             "proxy_jump_4to3": jump_ratio(proxy, cfg.jump_hi_bit, cfg.jump_lo_bit),
             "output_jump_4to3": jump_ratio(output, cfg.jump_hi_bit, cfg.jump_lo_bit),
         }
+
+        if awq_results and name in awq_results:
+            a = awq_results[name]
+            lo = cfg.jump_lo_bit                       # report AWQ benefit at 3-bit
+            rtn3 = a["rtn_output_error"][lo]
+            awq3 = a["awq_output_error"][lo]
+            rec["awq_output_error"] = {str(b): a["awq_output_error"][b] for b in cfg.bit_widths}
+            rec["awq_best_alpha"] = {str(b): a["best_alpha"][b] for b in cfg.bit_widths}
+            # how many times AWQ shrinks the 3-bit output error vs plain RTN (>=1)
+            rec["awq_reduction_3bit"] = rtn3 / max(awq3, 1e-12)
+
+        records[name] = rec
     return records
 
 
@@ -83,6 +96,7 @@ def build_summary(records: Dict[str, dict], cfg: DiagConfig) -> dict:
     proxy_jump = [records[n]["proxy_jump_4to3"] for n in names]
     output_jump = [records[n]["output_jump_4to3"] for n in names]
     proxy_3bit = [records[n]["proxy_error"]["3"] for n in names]
+    has_awq = all("awq_reduction_3bit" in records[n] for n in names)
 
     # module-family aggregation
     family: Dict[str, dict] = {}
@@ -98,18 +112,23 @@ def build_summary(records: Dict[str, dict], cfg: DiagConfig) -> dict:
             "mean_3bit_proxy_error": float(np.mean([records[m]["proxy_error"]["3"] for m in members])),
             "mean_3bit_output_error": float(np.mean([records[m]["output_error"]["3"] for m in members])),
         }
+        if has_awq:
+            family[mtype]["mean_awq_reduction_3bit"] = float(
+                np.mean([records[m]["awq_reduction_3bit"] for m in members])
+            )
 
     top_kurt_name = max(names, key=lambda n: records[n]["mean_kurtosis"])
 
-    return {
+    correlations = {
+        "kurtosis_vs_proxy_jump_spearman": _spearman(kurt, proxy_jump),
+        "kurtosis_vs_output_jump_spearman": _spearman(kurt, output_jump),
+        "proxy_jump_vs_output_jump_spearman": _spearman(proxy_jump, output_jump),
+        "kurtosis_vs_3bit_proxy_error_spearman": _spearman(kurt, proxy_3bit),
+    }
+    summary = {
         "proxy_jump_4to3": _dist(proxy_jump),
         "output_jump_4to3": _dist(output_jump),
-        "correlations": {
-            "kurtosis_vs_proxy_jump_spearman": _spearman(kurt, proxy_jump),
-            "kurtosis_vs_output_jump_spearman": _spearman(kurt, output_jump),
-            "proxy_jump_vs_output_jump_spearman": _spearman(proxy_jump, output_jump),
-            "kurtosis_vs_3bit_proxy_error_spearman": _spearman(kurt, proxy_3bit),
-        },
+        "correlations": correlations,
         "top_kurtosis_layer": {
             "name": top_kurt_name,
             "mean_kurtosis": records[top_kurt_name]["mean_kurtosis"],
@@ -117,3 +136,13 @@ def build_summary(records: Dict[str, dict], cfg: DiagConfig) -> dict:
         },
         "module_family": family,
     }
+
+    if has_awq:
+        reduction = [records[n]["awq_reduction_3bit"] for n in names]
+        summary["awq_reduction_3bit"] = _dist(reduction)
+        correlations["kurtosis_vs_awq_reduction_spearman"] = _spearman(kurt, reduction)
+        correlations["outlier_ratio_vs_awq_reduction_spearman"] = _spearman(
+            [records[n]["mean_outlier_ratio"] for n in names], reduction
+        )
+
+    return summary
