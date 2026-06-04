@@ -25,5 +25,9 @@ venv/
 hf_cache/
 .cache/
 
+# local-only AI-agent guide (not published)
+CLAUDE.md
+AGENTS.md
+
 # NOTE: results/ and figures/ ARE committed on purpose — they are the
 # reproducible artifacts of the diagnostic and back the README/report.
