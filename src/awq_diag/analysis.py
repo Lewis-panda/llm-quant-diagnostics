@@ -145,4 +145,24 @@ def build_summary(records: Dict[str, dict], cfg: DiagConfig) -> dict:
             [records[n]["mean_outlier_ratio"] for n in names], reduction
         )
 
+    # --- full bit-width curve + the "~4x per bit" law (no single transition bit) ---
+    bits = list(cfg.bit_widths)
+    med_out = {b: float(np.median([records[n]["output_error"][str(b)] for n in names])) for b in bits}
+    summary["per_bit_median_output_error"] = {str(b): med_out[b] for b in bits}
+    # geometric per-bit ratio for each consecutive step; ≈4 everywhere = smooth, not a transition
+    step_ratio = {}
+    for hi, lo in zip(bits[:-1], bits[1:]):
+        step_ratio[f"{hi}to{lo}"] = round((med_out[lo] / max(med_out[hi], 1e-12)) ** (1.0 / (hi - lo)), 3)
+    summary["per_bit_step_ratio"] = step_ratio
+
+    # explicit 3->2 step (the absolute-collapse step) for comparison with 4->3
+    if 3 in cfg.bit_widths and 2 in cfg.bit_widths:
+        jump_3to2 = [records[n]["output_error"]["2"] / max(records[n]["output_error"]["3"], 1e-12)
+                     for n in names]
+        summary["output_jump_3to2"] = _dist(jump_3to2)
+        correlations["kurtosis_vs_output_jump_3to2_spearman"] = _spearman(kurt, jump_3to2)
+        correlations["kurtosis_vs_2bit_output_error_spearman"] = _spearman(
+            kurt, [records[n]["output_error"]["2"] for n in names]
+        )
+
     return summary

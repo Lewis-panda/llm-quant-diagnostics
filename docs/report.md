@@ -81,11 +81,25 @@ family, outliers are *overwhelmingly* concentrated in two projections:
 `o_proj` (reads the attention output) and `down_proj` (reads the MLP intermediate) are the outlier
 hot-spots — consistent with the literature on where activation outliers live.
 
-### 4.3 No 4→3 bit phase transition
+### 4.3 No phase transition at *any* bit — and where the model actually collapses
 
-The 4→3 jump ratio is **smooth and tightly clustered**: median **3.92×**, range **[2.99×, 4.02×]**,
-with **0 / 196 layers above the 5× threshold** (0.5B: median 3.85×, 0 / 168 above 5×). There is no
-abrupt single-layer collapse in this setup.
+The full bit-width curve (median output error) and the per-bit growth ratio:
+
+| bit | 8 | 6 | 4 | 3 | 2 |
+|---|---|---|---|---|---|
+| median output error | 0.0001 | 0.0014 | **0.022** | **0.079** | **0.268** |
+| per-bit ratio to next | — | 4.01× | 3.99× | 3.61× | 3.38× |
+
+Two things follow. **(1) There is no "collapse bit".** The error grows by a near-constant ~4× per
+bit at *every* step — exactly the analytic scaling of uniform-quantization MSE (`MSE ∝ 4^{−bits}`).
+If anything the ratio *decelerates* at low bits (clamp saturation), so the 4→3 jump (3.92× proxy /
+3.83× output median) and the 3→2 jump (**3.45×**, the *smallest* step) are both ≤ 4× — **0 / 196
+layers** exceed 5× at 4→3, and only **2 / 196** at 3→2 (and those two — `L0.q_proj`, `L1.gate_proj`
+— are *low*-kurtosis). **(2) The absolute collapse is at 2-bit** (median error **27%** of the layer
+output, vs 7.9% at 3-bit) — but this is the *cumulative* product of the smooth law, not a sudden
+transition. So the original "4→3 phase transition" question is mis-posed: there is no magic bit;
+4→3 is merely the usable→painful *onset*. (RTN at 2-bit is also not representative — usable 2-bit
+needs QAT, not round-to-nearest — so we report 2-bit but do not headline it.)
 
 ### 4.4 Kurtosis does *not* predict the jump — but *does* predict the level
 
@@ -93,12 +107,15 @@ This is the central result, and it has two halves that are easy to conflate:
 
 | Relationship | Spearman ρ (1.5B) | ρ (0.5B) | Reading |
 |---|---|---|---|
-| κ vs **4→3 jump ratio** | **−0.36** (p=2e-7) | −0.26 | ❌ higher-κ layers do *not* jump more — if anything, less |
+| κ vs **4→3 jump** (proxy / output) | **−0.36** / −0.11 | −0.26 / — | ❌ higher-κ layers do *not* jump more — if anything, less |
+| κ vs **3→2 jump** (output) | **−0.25** | similar | ❌ even more negative than 4→3's −0.11 (same output metric) |
 | κ vs **absolute 3-bit error** | **+0.55** (p=4e-17) | +0.51 | ✅ higher-κ layers *do* have a higher error floor |
+| κ vs **absolute 2-bit error** | **+0.53** | similar | ✅ same at 2-bit — it's about *level*, at every bit |
 
 So outliers **raise the error floor uniformly** rather than creating a **localized phase
-transition**. The naive hypothesis ("high kurtosis → sharp 4→3 collapse") is **false** here; the
-subtler true statement is "high kurtosis → consistently higher low-bit error at every bit-width."
+transition**, and this is consistent across bit-widths: kurtosis tracks the error *level* at both
+3- and 2-bit (ρ≈+0.5) but the per-step *jump* never (ρ≈−0.1 to −0.25). The naive hypothesis
+("high kurtosis → sharp collapse at some bit") is **false** at every step.
 
 ### 4.5 The cheap proxy partially tracks the real output error
 
@@ -135,23 +152,31 @@ RTN is the fixed, assumption-free baseline, and AWQ is measured *relative to it*
 
 1. AWQ saliency concentration is real and reproducible.
 2. Activation outliers are heavy (κ up to ~12) and concentrated in `o_proj` / `down_proj`.
-3. The 4→3 bit transition is **smooth** — no layer exceeds the 5× phase-transition threshold.
-   (And note: median jump ≈ 3.9× is essentially the analytic ~4×/bit scaling of uniform-quant MSE
-   — see §7 — so this metric *cannot by construction* show a phase transition.)
-4. **Kurtosis predicts the low-bit error *level* (ρ≈+0.55) but not the 4→3 *jump* (ρ≈−0.36).**
-5. Both (3) and (4) **replicate** on a second model size (Qwen2.5-0.5B).
+3. **There is no phase-transition bit.** Error grows ~4× per bit at *every* step
+   (8→6→4→3→2: 4.0 / 4.0 / 3.6 / 3.4×), the analytic scaling of uniform-quant MSE; it even
+   *decelerates* at low bits. The 2-bit collapse (median error 27% vs 7.9% at 3-bit) is the
+   *cumulative* product of that smooth law, not a sudden jump (0 layers > 5× at 4→3, 2 at 3→2).
+4. **Kurtosis predicts the low-bit error *level* (ρ≈+0.5 at 3- and 2-bit) but never the per-step
+   *jump* (ρ≈−0.11 at 4→3, −0.25 at 3→2).**
+5. (3) and (4) **replicate** on a second model size (Qwen2.5-0.5B).
 6. The cheap proxy moderately tracks the real layer-output error (ρ≈0.62).
 7. Implemented AWQ scaling cuts 3-bit error ~2× on the outlier families (up to 25.9× for one
    layer), ~1.2× elsewhere — activation-aware protection helps *exactly* where the outliers are.
 
 ## 6. Interpretation
 
-A single per-layer activation statistic captures the *magnitude* of a layer's quantization
-difficulty (its error floor) but not its *bit-reduction dynamics*. Because the 4→3 jump is uniform
-across layers — including across module families with 50× differences in kurtosis — low-bit failure
-in these models is unlikely to be explained by single-layer activation distributions alone. The more
-promising hypothesis is **inter-layer error propagation**: how local quantization error grows or is
-absorbed by the residual stream and normalization as it flows downstream.
+Two takeaways. First, the framing of "a bit-width where the model suddenly breaks" is itself
+mis-posed for a layer-local RTN proxy: error follows a smooth ~4×/bit law, so the 2-bit collapse is
+cumulative, not a transition — a true transition (if any) would only surface in *model-level*
+metrics (perplexity / logit KL), which this diagnostic does not yet measure.
+
+Second, a single per-layer activation statistic captures the *magnitude* of a layer's quantization
+difficulty (its error floor) but not its *bit-reduction dynamics* — and this holds at every bit
+(3- and 2-bit alike). Because the per-step jump is uniform across layers — including across module
+families with 50× differences in kurtosis — low-bit failure in these models is unlikely to be
+explained by single-layer activation distributions alone. The more promising hypothesis is
+**inter-layer error propagation**: how local quantization error grows or is absorbed by the residual
+stream and normalization as it flows downstream.
 
 ## 7. Limitations
 

@@ -14,12 +14,14 @@ AWQ-Diag instruments a Hugging Face causal LM with PyTorch forward hooks, reprod
 [AWQ](https://arxiv.org/abs/2306.00978) activation-aware saliency picture, and runs a per-layer
 bit-width sweep (8 → 2 bit) to ask a focused question:
 
-> **Can a cheap, single-layer activation statistic (kurtosis) predict where a model breaks when you push it from 4-bit to 3-bit?**
+> **Is there a bit-width where the quantization error *suddenly* blows up (a "phase transition"), and can a cheap single-layer statistic (kurtosis) predict where?**
 
-The honest answer here is **no — and that negative result is the point.** Activation outliers
-clearly exist and are heavily concentrated in specific module families, but they raise the
-*absolute* low-bit error floor without producing the localized 4→3 bit "phase transition" the
-naive hypothesis predicted. The finding replicates across two model sizes.
+The honest answer is **no — and that negative result is the point.** There is no special
+"collapse bit": the error grows by a near-constant **~4× per bit at every step** (8→6→4→3→2), so
+the catastrophic 2-bit error (~27% of the layer output) is the *cumulative* result of a smooth
+analytic law, not a sudden transition. Activation outliers are real and concentrated in specific
+module families, but they only raise the *absolute* error floor — they never predict a per-step
+jump. This replicates across two model sizes.
 
 > ⚠️ This is a **learning-oriented diagnostic project**, not a claim of a new quantization method.
 > It is designed to demonstrate understanding of AWQ, activation outliers, and low-bit failure —
@@ -37,16 +39,25 @@ Measured on `Qwen/Qwen2.5-1.5B` and replicated on `Qwen/Qwen2.5-0.5B`:
 | Does AWQ saliency concentrate? | top-1% channel importance share | up to **17.6%** (≈18× the uniform 1%) | ✅ hockey-stick reproduced |
 | Do activation outliers exist? | max excess kurtosis | **κ ≈ 12** (`layers.1.mlp.down_proj`) | ✅ yes, very heavy-tailed |
 | Are outliers module-specific? | mean kurtosis by family | **`down_proj` & `o_proj` ≫ everything else** | ✅ strong structure |
-| Is there a 4→3 bit phase transition? | jump ratio = err(3b)/err(4b) | median **3.9×**, **0 layers > 5×** | ❌ smooth, no transition |
-| Does kurtosis predict the **jump**? | Spearman ρ(κ, jump) | **−0.36** (1.5B), **−0.26** (0.5B) | ❌ negative — it does not |
-| Does kurtosis predict the **error level**? | Spearman ρ(κ, 3-bit error) | **+0.55** (1.5B), **+0.51** (0.5B) | ✅ yes — different thing! |
+| Is there a phase transition at **any** bit? | per-bit error ratio (8→6→4→3→2) | **4.0 / 4.0 / 3.6 / 3.4×** per bit | ❌ no — smooth ~4×/bit, even *decelerates* |
+| Where does the model actually collapse? | median output error by bit | 4b **2.2%** → 3b **7.9%** → 2b **27%** | ⚠️ 2-bit (but it's cumulative, not a jump) |
+| Does kurtosis predict the 4→3 **jump**? | Spearman ρ(κ, jump) | **−0.36** proxy / **−0.11** output (1.5B); −0.26 (0.5B) | ❌ negative — it does not |
+| Does kurtosis predict the 3→2 **jump**? | Spearman ρ(κ, output jump) | **−0.25** (vs 4→3's −0.11 output); only >5× layers are *low*-κ | ❌ even more negative |
+| Does kurtosis predict the **error level**? | Spearman ρ(κ, error), 3-bit / 2-bit | **+0.52 / +0.53** | ✅ yes — at every bit (different thing!) |
 | Does the cheap proxy track real output error? | Spearman ρ(proxy jump, output jump) | **+0.62** (1.5B), **+0.66** (0.5B) | ⚠️ partially |
 | Does AWQ-style scaling help the outlier layers? | 3-bit output-error reduction by family | `down_proj`/`o_proj` **~2.0–2.3×** vs others **~1.2×** (max **25.9×**) | ✅ AWQ rescues exactly the outlier families |
 
-**The one-line takeaway:** *kurtosis explains the **level** of low-bit error (outliers raise the
-floor), but not the **sensitivity** to bit reduction (the 4→3 jump is uniform across layers).*
+**The one-line takeaway:** *under round-to-nearest, low-bit error follows a smooth ~4×/bit law, so
+the 2-bit collapse is cumulative rather than a sudden transition; kurtosis explains the **level** of
+that error at every bit (ρ≈+0.5), but never the per-step **jump** (ρ≈−0.1 at 4→3, −0.25 at 3→2).*
 Low-bit failure is therefore unlikely to be a pure single-layer-statistics phenomenon — which
 points the next investigation toward **inter-layer error propagation**.
+
+> **Why not make 2-bit the headline?** 2-bit is where the *absolute* error is largest (~27%), and
+> it is reported in full. But (a) the per-step jump there is the *smallest* (3.4×, not a transition),
+> and (b) usable 2-bit needs quantization-aware training, not round-to-nearest — so RTN-2-bit is the
+> "worst baseline", not evidence about real 2-bit. The diagnostic centers on the 4→3 *onset* (4-bit
+> usable → 3-bit painful) while reporting the whole 8→2 curve.
 
 We also *implement* AWQ's activation-aware scaling (not just describe it): a per-input-channel
 scaling search that protects salient channels before quantizing. It cuts the 3-bit output error

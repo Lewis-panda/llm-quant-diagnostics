@@ -173,6 +173,12 @@ def _print_headline(result: dict) -> None:
     rho, p = s["correlations"]["kurtosis_vs_proxy_jump_spearman"]
     tk = s["top_kurtosis_layer"]
     print("\n  ── headline ─────────────────────────────────────────")
+    if "per_bit_step_ratio" in s:
+        pbe = s["per_bit_median_output_error"]
+        sr = s["per_bit_step_ratio"]
+        print("  median output error/bit: " + "  ".join(f"{b}b={pbe[b]:.3f}" for b in pbe))
+        print("  per-bit error ratio (≈4x everywhere = no transition): "
+              + "  ".join(f"{k}={v:.2f}x" for k, v in sr.items()))
     print(f"  4→3 proxy jump: min {pj['min']:.2f}x  median {pj['median']:.2f}x  "
           f"max {pj['max']:.2f}x  (>5x: {pj['num_above_5x']})")
     print(f"  kurtosis vs jump Spearman ρ = {rho:.3f} (p={p:.1e})")

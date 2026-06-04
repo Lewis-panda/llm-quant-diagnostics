@@ -19,8 +19,8 @@
 
 **一句話：**
 > AWQ-Diag 是一個**診斷工具**(不是做一個更強的量化方法)：用 PyTorch hook 把模型每一層的
-> activation 抓出來分析，問一個問題——「能不能用一個便宜的單層統計量（kurtosis），預測模型在
-> 4-bit 降到 3-bit 時哪裡會壞掉？」
+> activation 抓出來分析，問一個問題——「low-bit 量化會不會在**某個 bit 突然崩**(phase
+> transition)？能不能用一個便宜的單層統計量(kurtosis)預測？」
 
 **必要概念：**
 
@@ -32,10 +32,13 @@ bit 越少 = 格子越少 = 誤差越大
 ```
 
 **Results：**
-- 在 Qwen2.5-1.5B / 0.5B 上，**沒有觀察到「突然爆炸」**——4→3 bit 的誤差是平滑上升的。
-- kurtosis（outlier 嚴重程度）**不能**預測「跳躍幅度」，但**能**預測「誤差的絕對水平」。
+- **沒有「突然崩」的那個 bit。** 誤差在每一步都 ~4×(8→6→4→3→2)，這是 uniform 量化的解析律；
+  2-bit 的崩壞(誤差 ~27%)是**累積**出來的，不是某一步跳出來的。
+- kurtosis(outlier 嚴重程度)**不能**預測任一步的「跳躍幅度」(4→3 ρ≈−0.1、3→2 ρ≈−0.25)，
+  但**能**預測「誤差的絕對水平」(3-bit、2-bit 都 ρ≈+0.5)。
 - 額外實作了 AWQ 的 activation-aware scaling，它**剛好**最會救 outlier 最重的兩類 layer。
 - 這是一個**誠實的負面結果**，並指出下一個更好的研究問題。
+- 在 Qwen2.5-1.5B / 0.5B 都成立。
 
 ---
 
@@ -183,9 +186,10 @@ output = ‖Wx - Ŵx‖²  /  ‖Wx‖²
 
 ### 4.5 Jump ratio 與 phase transition
 ```
-jump = error(3-bit) / error(4-bit)      ← 4 bit 降到 3 bit，誤差變幾倍
+jump = error(lo-bit) / error(hi-bit)    ← 降一個 bit，誤差變幾倍
 ```
-`jump > 5` 標記為 phase transition。原始假設：high-kurtosis 的層，jump 應該特別大。
+`jump > 5` 標記為 phase transition。原始假設：high-kurtosis 的層，在某個 bit-step 的 jump 應該
+特別大。我們對 4→3 和 3→2 都看，並把整條 8→2 曲線的 per-bit 倍率列出來。
 
 ### 4.6 實作 AWQ scaling(把「算了 importance 但沒用」補起來)
 4.1–4.5 算了 importance 卻用 RTN 量化，從沒「用」importance。這裡補上 AWQ 真正的機制：
@@ -245,17 +249,29 @@ pipeline 跑完每個模型輸出 9 張圖 + 一個 JSON。每張圖對應一個
 - 但 jump ratio 沒有比較高(down_proj 甚至最低 3.68×)→ 呼應 6.2 的「敏感度」。
 - 第 5 張圖把「左邊 kurtosis 差很多、右邊 jump 一樣平」並排，是最有說服力的一張。
 
-### 6.4 為什麼根本看不到 phase transition：~4×/bit 是數學必然
-這是一個必須主動講的點。uniform 量化的 MSE ∝ `4^(-bits)`(step 每減半，MSE 變 4 倍)，所以
-**任何層、任何分布**降一個 bit，誤差都會 ≈4×。實測完全吻合：
+### 6.4 沒有「突然崩」的那個 bit：~4×/bit 是數學必然
+這是一個必須主動講、也是最容易被誤解的點。uniform 量化的 MSE ∝ `4^(-bits)`(step 每減半，
+MSE 變 4 倍)，所以**任何層、任何分布**降一個 bit，誤差都會 ≈4×。實測完全吻合(median output
+error 與 per-bit 倍率)：
 
 ```
-8→6→4→3→2 每個 bit step 的誤差倍率：4.00 / 3.99 / 3.92 / 3.65 ×
+bit:        8       6       4       3       2
+median err: 0.0001  0.0014  0.022   0.079   0.268   ← 2-bit 已到 ~27%
+per-bit 倍率:   4.01×   3.99×   3.61×   3.38×        ← 每一步都 ~4×，低 bit 還變慢
 ```
 
-含義：layer-local 的 RTN proxy error 在設計上**幾乎不可能**顯示 phase transition——它是 bit 的
-平滑解析函數。所以「沒有層超過 5×」一半是指標本身決定的。真正的 transition(若存在)只會出現在
-**model-level 指標**(perplexity / logit KL)，這正是下一步要接的東西。
+兩個結論：
+1. **沒有「崩的那一個 bit」。** 每一步都 ~4×，3→2 甚至是**最小**的一步(3.45× < 4→3 的 3.83×，
+   因為 clamp 飽和)。3→2 跳最兇(>5×)的兩層 `L0.q_proj`、`L1.gate_proj` 還是**低 kurtosis**。
+2. **絕對崩壞在 2-bit**(誤差 27% vs 3-bit 的 8%)，但這是平滑律**累積**的結果，不是某一步跳出來的。
+
+所以原本「4→3 哪裡突然崩」的問法是 mis-posed：沒有 magic bit，4→3 只是「能用→開始痛」的
+**onset**。layer-local 的 RTN proxy 在設計上幾乎看不到 transition——真正的 transition(若存在)
+只會在 **model-level 指標**(perplexity / logit KL)出現。
+
+> 為什麼不把 2-bit 當主結論?(a) 它的 per-step jump 反而最小，不是 transition；(b) 真正能用的
+> 2-bit 要靠 QAT，不是 RTN，所以 RTN-2bit 是「最爛 baseline」、不代表真實 2-bit。我們完整回報
+> 2-bit，但 headline 放在 4→3 onset。
 
 ### 6.5 proxy vs output
 proxy jump 和真實 output jump 相關 ρ≈0.62(兩個模型都 0.6+)。→ proxy 可當篩選信號，但系統性
@@ -394,9 +410,16 @@ proxy 是 activation-weighted 的 weight MSE，只看單層權重重建誤差；
 靠一步，並驗證 proxy 的可信度(ρ≈0.62)。
 
 **Q：為什麼沒看到 phase transition？是不是設定太弱？**
-有一半是指標決定的：uniform 量化 MSE ∝ `4^(-bits)`，每降一 bit 都 ≈4×(實測 4.00/3.99/3.92/
-3.65×)，所以 layer-local RTN proxy 天生看不到 transition。我**不宣稱**「LLM 沒有 phase
-transition」，只說在這個診斷設定下 4→3 是平滑的；要下強結論得用 model-level 指標。
+有一半是指標決定的：uniform 量化 MSE ∝ `4^(-bits)`，每降一 bit 都 ≈4×(實測 per-bit 4.01/3.99/
+3.61/3.38×)，所以 layer-local RTN proxy 天生看不到 transition。我**不宣稱**「LLM 沒有 phase
+transition」，只說在這個診斷設定下每一步都平滑；要下強結論得用 model-level 指標。
+
+**Q：2-bit 誤差 27% 才是真的崩，為什麼不以 2-bit / 3→2 為主結論？**
+絕對誤差上你說得對，2-bit 才崩(27% vs 3-bit 8%)，這個我有完整回報。但「把問題改成預測 3→2」
+反而更弱：(a) 3→2 的 jump 反而**最小**(3.45×)，不是更大的跳，因為 27% 是 ~4× 平滑律**累積**的，
+不是某一步跳的；(b) kurtosis 預測 3→2 jump 更爛(ρ=−0.25)，3→2 跳最兇的層還是低 kurtosis；
+(c) 真正能用的 2-bit 要 QAT，RTN-2bit 不代表真實 2-bit。所以 headline 放在 4→3 onset，2-bit 當
+完整曲線回報，而不是主結論。
 
 **Q：AWQ 那個結果怎麼解讀？per-layer ρ≈0 不是代表沒關係嗎？**
 不是。per-layer ρ≈0 是因為 7 類 module 有 5 類是低 outlier、kurtosis 全擠在 ~0.08，形成沒有訊號
@@ -426,9 +449,9 @@ propagation 的追蹤(local error 沿 residual stream 怎麼放大)。如果 pro
 
 ### 一段話總結
 > AWQ-Diag 是一個診斷工具，用 forward hook 抓每層 activation，復現 AWQ importance、量 outlier
-> (kurtosis)、做 8→2 bit sweep，並實作 AWQ scaling 跟 RTN 比。核心發現：activation outlier 集中
-> 在 `o_proj`/`down_proj`，會抬高低 bit 誤差的**絕對水平**(ρ≈+0.55)，但**不能**預測 4→3 bit 的
-> 誤差**跳躍幅度**(ρ≈−0.36)；而且因為 uniform 量化 MSE 是 ~4×/bit 的解析必然，layer-local proxy
-> 本來就看不到 phase transition。AWQ 的 activation-aware 保護剛好最會救那兩類 outlier layer
-> (down_proj 2.3×、單層最高 25.9×)。結論在 0.5B 和 1.5B 都成立，指向下一步：低 bit 崩潰比較可能
-> 是跨層誤差傳遞，而不是單層 activation 分布就能解釋。
+> (kurtosis)、做 8→2 bit sweep，並實作 AWQ scaling 跟 RTN 比。核心發現：**沒有「突然崩」的那個
+> bit**——誤差在每一步都 ~4×(uniform 量化的解析律)，2-bit 的 27% 崩壞是累積、不是 transition。
+> activation outlier 集中在 `o_proj`/`down_proj`，會抬高低 bit 誤差的**絕對水平**(3-bit、2-bit 都
+> ρ≈+0.5)，但**不能**預測任一步的**跳躍幅度**(4→3 −0.1、3→2 −0.25)。AWQ 的 activation-aware
+> 保護剛好最會救那兩類 outlier layer(down_proj 2.3×、單層最高 25.9×)。結論在 0.5B 和 1.5B 都
+> 成立，指向下一步：低 bit 崩潰比較可能是跨層誤差傳遞，而不是單層 activation 分布就能解釋。
