@@ -14,7 +14,7 @@
 - [Part 7 — 程式架構](#part-7--程式架構code-怎麼組織)
 - [Part 8 — 怎麼跑](#part-8--怎麼跑)
 - [Part 9 — 限制與下一步](#part-9--限制與下一步)
-- [Part 10 — 面試 Q&A 預備](#part-10--面試-qa-預備)
+- [Part 10 — Q&A](#part-10--qa)
 
 ---
 
@@ -357,7 +357,7 @@ pytest
 
 ---
 
-## Part 10 — 面試 Q&A 預備
+## Part 10 — Q&A
 
 **Q：為什麼用 kurtosis 當 predictor？**
 A：kurtosis 直接量「尾巴厚度 / outlier 嚴重度」，而 outlier 正是量化變難的已知主因
