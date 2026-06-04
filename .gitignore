@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# environments
+.env
+.venv/
+env/
+venv/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# model / data caches (never commit weights)
+*.safetensors
+*.bin
+hf_cache/
+.cache/
+
+# NOTE: results/ and figures/ ARE committed on purpose — they are the
+# reproducible artifacts of the diagnostic and back the README/report.

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "awq-diag"
+version = "0.1.0"
+description = "A diagnostic toolkit for understanding why low-bit LLM quantization fails."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Lewis" }]
+keywords = ["llm", "quantization", "awq", "interpretability", "diagnostics"]
+dependencies = [
+    "torch>=2.4",
+    "transformers>=4.50",
+    "accelerate",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+]
+
+[project.scripts]
+awq-diag = "awq_diag.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

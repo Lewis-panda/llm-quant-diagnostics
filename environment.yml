@@ -1,0 +1,25 @@
+# micromamba / conda environment for AWQ-Diag
+#
+#   micromamba env create -f environment.yml
+#   micromamba activate awq-diag
+#
+# PyTorch is installed from the cu128 wheel index (RTX 40/50-series, Blackwell-ready).
+# For a different CUDA version change the --extra-index-url below; for CPU-only use
+#   https://download.pytorch.org/whl/cpu
+name: awq-diag
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.9.1
+      - transformers>=4.50,<5
+      - accelerate
+      - numpy<2.3
+      - scipy
+      - matplotlib
+      - seaborn
+      - tqdm
+      - pytest
