@@ -166,6 +166,44 @@ def plot_module_family(summary: dict, path: Path) -> Path:
     return path
 
 
+def plot_importance_surface_3d(
+    matrix: np.ndarray,
+    channel_index: np.ndarray,
+    layer_index: np.ndarray,
+    module_type: str,
+    path: Path,
+) -> Path:
+    """The classic activation-aware-quant surface.
+
+    x = input channel, y = layer depth, z = AWQ importance (|W| · |activation|).
+    Spiky towers = the salient/outlier channels that AWQ protects. The same
+    "outlier channel" picture appears in LLM.int8(), SmoothQuant and AWQ.
+    """
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers 3d projection)
+
+    X, Y = np.meshgrid(channel_index, layer_index)
+    fig = plt.figure(figsize=(12, 7.5))
+    ax = fig.add_subplot(111, projection="3d")
+    surf = ax.plot_surface(
+        X, Y, matrix, cmap="viridis", linewidth=0, antialiased=True,
+        rcount=matrix.shape[0], ccount=matrix.shape[1],
+    )
+    ax.set_xlabel("input channel", labelpad=10)
+    ax.set_ylabel("layer", labelpad=10)
+    ax.set_zlabel("AWQ importance  |W|·|x|", labelpad=8)
+    ax.set_title(
+        f"Activation-aware weight importance across depth — {module_type}\n"
+        f"spiky towers = salient / outlier channels AWQ protects",
+        fontsize=12,
+    )
+    ax.view_init(elev=32, azim=-58)
+    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=12, pad=0.02, label="importance")
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+    return path
+
+
 def plot_proxy_vs_output(records: Dict[str, dict], summary: dict, path: Path) -> Path:
     proxy = np.array([records[n]["proxy_jump_4to3"] for n in records])
     output = np.array([records[n]["output_jump_4to3"] for n in records])

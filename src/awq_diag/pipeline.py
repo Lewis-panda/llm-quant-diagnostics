@@ -42,6 +42,39 @@ def _demo_importance_curves(model, collector, n_layer0: int = 4) -> Dict[str, np
     return curves
 
 
+def _maxpool_cols(M: np.ndarray, max_cols: int):
+    """Max-pool columns down to <= max_cols so outlier spikes survive on a 3D mesh."""
+    L = M.shape[1]
+    if L <= max_cols:
+        return M, np.arange(L)
+    bin_size = int(np.ceil(L / max_cols))
+    nbins = int(np.ceil(L / bin_size))
+    padded = np.zeros((M.shape[0], nbins * bin_size), dtype=M.dtype)
+    padded[:, :L] = M
+    pooled = padded.reshape(M.shape[0], nbins, bin_size).max(axis=2)
+    return pooled, np.arange(nbins) * bin_size
+
+
+def _importance_surface(model, collector, module_type: str, max_cols: int = 512):
+    """Build (matrix[n_layers, n_cols], channel_index, layer_index) of AWQ importance
+    for every layer of one module family, or None if the family is absent."""
+    rows = []
+    for name, module in iter_block_linears(model):
+        if name.split(".")[-1] != module_type or name not in collector.stats:
+            continue
+        idx = int(name.split("layers.")[1].split(".")[0])
+        W = module.weight.detach().cpu().float()
+        imp = (W.abs().mean(dim=0) * collector.stats[name]["channel_magnitude"]).numpy()
+        rows.append((idx, imp))
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r[0])
+    matrix = np.stack([r[1] for r in rows])
+    layer_index = np.array([r[0] for r in rows])
+    matrix, channel_index = _maxpool_cols(matrix, max_cols)
+    return matrix, channel_index, layer_index
+
+
 def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = True) -> dict:
     set_seed(cfg.seed)
 
@@ -103,8 +136,16 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
         plotting.plot_kurtosis_vs_jump(records, summary, d / "kurtosis_vs_jump_ratio.png")
         plotting.plot_module_family(summary, d / "module_family.png")
         plotting.plot_proxy_vs_output(records, summary, d / "proxy_vs_output_error.png")
+        n_fig = 6
+        for mtype in ("down_proj", "o_proj"):  # the two highest-kurtosis families
+            surf = _importance_surface(model, collector, mtype)
+            if surf is not None:
+                plotting.plot_importance_surface_3d(
+                    *surf, mtype, d / f"importance_surface_{mtype}.png"
+                )
+                n_fig += 1
         if verbose:
-            print(f"      wrote 6 figures to {d}")
+            print(f"      wrote {n_fig} figures to {d}")
 
     if verbose:
         _print_headline(result)

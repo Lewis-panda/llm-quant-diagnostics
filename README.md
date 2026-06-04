@@ -59,6 +59,12 @@ points the next investigation toward **inter-layer error propagation**.
 |---|---|
 | ![family](figures/Qwen2.5-1.5B/module_family.png) | ![pvo](figures/Qwen2.5-1.5B/proxy_vs_output_error.png) |
 
+**Activation-aware importance across depth** — the classic outlier-channel surface
+(`x` = input channel, `y` = layer, `z` = AWQ importance `|W|·|x|`). The spiky towers are
+the salient/outlier channels AWQ protects; here for `down_proj`, the highest-kurtosis family:
+
+![surface](figures/Qwen2.5-1.5B/importance_surface_down_proj.png)
+
 **Cross-model replication** (the negative result is not a 1.5B fluke):
 
 ![cross](figures/cross_model_jump_distribution.png)
@@ -122,7 +128,7 @@ Outputs land in:
 
 ```
 results/diagnostic_<model>.json      # full per-layer record + summary (see schema below)
-figures/<model>/*.png                # 6 per-model figures
+figures/<model>/*.png                # 8 per-model figures (incl. 3D importance surfaces)
 figures/cross_model_jump_distribution.png
 results/cross_model_summary.md
 ```
@@ -140,7 +146,7 @@ AWQ-Diag/
 │   ├── hooks.py           # ActivationCollector (the core: stats + output-error tracing)
 │   ├── quant.py           # symmetric per-channel quant + error metrics
 │   ├── analysis.py        # per-layer records, summary, module-family, correlations
-│   ├── plotting.py        # the 6 figures
+│   ├── plotting.py        # the 8 figures (incl. 3D AWQ importance surface)
 │   ├── pipeline.py        # end-to-end orchestration
 │   └── cli.py             # `awq-diag` console entry
 ├── scripts/

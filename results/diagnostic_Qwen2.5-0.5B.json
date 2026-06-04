@@ -1,6 +1,6 @@
 {
   "model": "Qwen/Qwen2.5-0.5B",
-  "generated_utc": "2026-06-04T04:39:07+00:00",
+  "generated_utc": "2026-06-04T06:51:44+00:00",
   "config": {
     "bit_widths": [
       8,
