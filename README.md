@@ -6,6 +6,10 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-cu128-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+> 📖 **New here?** Start with the **[0→100 walkthrough (`docs/understanding.md`)](docs/understanding.md)** —
+> it builds up every concept (quantization, outliers, AWQ, kurtosis) from scratch and explains
+> every figure and result.
+
 AWQ-Diag instruments a Hugging Face causal LM with PyTorch forward hooks, reproduces the
 [AWQ](https://arxiv.org/abs/2306.00978) activation-aware saliency picture, and runs a per-layer
 bit-width sweep (8 → 2 bit) to ask a focused question:
