@@ -176,9 +176,8 @@ AWQ-Diag/
 ├── notebooks/
 │   └── awq_diagnostic.ipynb   # the original exploratory notebook (bilingual, educational)
 ├── docs/
-│   ├── report.md          # full write-up
-│   ├── note.md            # author's original project note (中文)
-│   └── research_gap_plan.md   # honest positioning
+│   ├── report.md          # full write-up (English)
+│   └── understanding.md   # 0→100 walkthrough (中文)
 ├── tests/                 # pytest (quant core, CPU-only, no model download)
 ├── environment.yml        # micromamba/conda environment
 ├── requirements.txt       # pip fallback

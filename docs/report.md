@@ -164,5 +164,3 @@ look → it's concentrated; measure → protecting it helps; check where → exa
 - GPTQ — [arxiv 2210.17323](https://arxiv.org/abs/2210.17323) ·
   SmoothQuant — [arxiv 2211.10438](https://arxiv.org/abs/2211.10438) ·
   LLM.int8() — [arxiv 2208.07339](https://arxiv.org/abs/2208.07339)
-- See [`research_gap_plan.md`](research_gap_plan.md) for the broader landscape (OmniQuant, QuaRot,
-  SpinQuant, ParetoQ, KIVI, QServe, FLUTE).
