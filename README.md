@@ -31,8 +31,9 @@ The answer is **yes, clearly** — and the project shows it four ways:
    low-importance modules. Protecting the "important" channels demonstrably helps — so the importance
    notion has real meaning, not just intuition.
 
-> This is a **learning project to understand AWQ deeply** — reproduce its saliency picture, visualize
-> it, and verify its central premise empirically. It is not a new quantization method.
+> The goal is to **reproduce, visualize, and empirically verify AWQ's core mechanism** — its saliency
+> picture, the salient-channel structure, and the payoff of protecting it. It is not a new
+> quantization method.
 
 ---
 

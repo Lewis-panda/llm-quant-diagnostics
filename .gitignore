@@ -29,5 +29,8 @@ hf_cache/
 CLAUDE.md
 AGENTS.md
 
+# cloned reference repos (e.g. the official mit-han-lab/llm-awq, for study only)
+reference/
+
 # NOTE: results/ and figures/ ARE committed on purpose — they are the
 # reproducible artifacts of the diagnostic and back the README/report.
