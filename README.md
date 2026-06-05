@@ -119,6 +119,24 @@ See [`docs/report.md`](docs/report.md) for the full method and math.
 
 ---
 
+## Extension (investigation): is AWQ's per-layer scale search necessary?
+
+A small follow-up, **not claimed as novel.** AWQ picks each group's scaling exponent `α` by a grid
+search (the bulk of its calibration cost). Quantizing the whole model (group-wise asymmetric) and
+measuring WikiText-2 perplexity, a **single global `α` matches or beats the official-style
+block-level AWQ scale search** in every config — clearly at 3-bit, tied at 4-bit:
+
+![ppl](figures/perplexity_search_free_awq.png)
+
+This is consistent with prior work (a global migration strength is exactly
+[SmoothQuant](https://arxiv.org/abs/2211.10438)'s `α=0.5`; 4-bit group-wise RTN is known to be
+near-lossless), so the value is the clean end-to-end reproduction, not novelty. The official
+`llm-awq` scale search would not run on Qwen2.5 + current transformers, so the AWQ baseline is a
+faithful reimplementation of its block-level grouping (no clipping); see
+[`docs/report.md` §9](docs/report.md) for method, the per-layer `α` study, and caveats.
+
+---
+
 ## Quickstart
 
 The environment is managed with **micromamba** (or conda/mamba).
@@ -170,8 +188,11 @@ AWQ-Diag/
 │   ├── pipeline.py        # end-to-end orchestration
 │   └── cli.py             # `awq-diag` console entry
 ├── scripts/
-│   ├── run_diagnostic.py  # run one model
-│   └── compare_models.py  # cross-model summary
+│   ├── run_diagnostic.py  # run one model (importance / outliers / AWQ benefit)
+│   ├── compare_models.py  # cross-model summary
+│   ├── alpha_study.py     # extension: does a cheap stat predict AWQ's optimal α?
+│   ├── perplexity_eval.py # extension: const-α vs block-AWQ vs RTN on WikiText-2 ppl
+│   └── plot_perplexity.py # extension: the perplexity comparison figure
 ├── results/               # JSON outputs + cross-model table
 ├── figures/               # generated PNGs
 ├── notebooks/

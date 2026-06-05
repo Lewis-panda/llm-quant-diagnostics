@@ -158,6 +158,44 @@ look → it's concentrated; measure → protecting it helps; check where → exa
 3. **More model families** (Llama / Gemma / Phi) to test whether the `o_proj`/`down_proj` importance
    concentration is universal.
 
+## 9. Extension (investigation): is AWQ's per-layer scale search necessary?
+
+> **Not claimed as novel.** This is a small, self-contained empirical check, not a research
+> contribution — see the honest situating at the end.
+
+AWQ picks each group's scaling exponent `α` (`s = act_scale^α`) by a grid search that re-runs the
+block forward for every candidate — the bulk of its calibration cost. Question: **does a single
+global `α` suffice?** Two experiments (`scripts/alpha_study.py`, `scripts/perplexity_eval.py`):
+
+1. **The optimal `α` is remarkably stable.** Across layers/models/bit-widths the best per-layer `α`
+   clusters at median ~0.2–0.4 (std ~0.13). The only consistent (weak) predictor of the per-layer
+   variation is top-1% importance concentration (ρ ≈ −0.4); kurtosis / outlier-ratio do not predict it.
+2. **A single global `α` matches the search on perplexity.** Quantizing the whole model with the
+   group-wise asymmetric quantizer and measuring WikiText-2 perplexity:
+
+   | | fp16 | RTN | **const-α** | block-level AWQ | per-Linear search |
+   |---|---|---|---|---|---|
+   | Qwen2.5-0.5B 3-bit | 13.1 | 51.8 | **27.1** | 27.3 | 27.4 |
+   | Qwen2.5-1.5B 3-bit | 9.7 | 28.4 | **15.6** | 16.7 | 16.8 |
+   | Qwen2.5-0.5B 4-bit | 13.1 | 15.6 | 14.9 | 14.9 | 14.8 |
+   | Qwen2.5-1.5B 4-bit | 9.7 | 10.9 | **10.8** | 11.1 | 11.0 |
+
+   A single tuned constant `α` matches or beats the *official-style block-level* AWQ scale search in
+   every config (clearly at 3-bit; tied at 4-bit). Greedily minimizing each layer's *local* output
+   error (the search) is not perplexity-optimal — a uniform constant is more robust. AWQ's value here
+   is concentrated at 3-bit; at 4-bit group-wise RTN is already near-lossless.
+
+**Honest situating (why this is not novel).** A single global migration strength is exactly
+[SmoothQuant](https://arxiv.org/abs/2211.10438)'s design (`α = 0.5`); that 4-bit group-wise RTN is
+near-lossless and AWQ's gains there are modest is well documented; and "greedy layer-local ≠
+global-optimal" is a standard PTQ observation. The point of this section is the *reproduction*: a
+clean, end-to-end check on Qwen2.5 reaching a defensible, literature-consistent conclusion.
+
+**Caveats.** The official `llm-awq` scale search would not run on Qwen2.5 + current transformers
+(its standalone-submodule forward is version-brittle; its *RTN* path does match ours, validating the
+quantizer), so the AWQ baseline here is a *faithful reimplementation* of its block-level grouping
+**without clipping**; calibration is small; only two small Qwen models.
+
 ## References
 
 - AWQ — [Activation-aware Weight Quantization](https://arxiv.org/abs/2306.00978) (MLSys 2024 Best Paper)
