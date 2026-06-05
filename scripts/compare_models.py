@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-"""Cross-model comparison from saved diagnostic JSONs.
+"""Cross-model comparison of the AWQ benefit, from saved diagnostic JSONs.
 
 Builds:
-  * figures/cross_model_jump_distribution.png  (overlaid 4→3 jump histograms)
-  * results/cross_model_summary.md             (markdown comparison table)
+  * figures/cross_model_awq_reduction.png   (AWQ 3-bit error reduction by module family)
+  * results/cross_model_summary.md          (markdown comparison table)
 
 Example
 -------
@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
+_ORDER = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 
 def load(paths: List[str]) -> Dict[str, dict]:
@@ -34,19 +35,24 @@ def load(paths: List[str]) -> Dict[str, dict]:
     return out
 
 
-def plot_jump_distributions(results: Dict[str, dict], path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(9, 6))
-    colors = plt.cm.viridis(np.linspace(0.15, 0.8, len(results)))
-    for (slug, data), c in zip(results.items(), colors):
-        jumps = np.array(list(data["jump_ratios"].values()))
-        med = np.median(jumps)
-        ax.hist(jumps, bins=30, alpha=0.5, color=c, edgecolor="white",
-                label=f"{slug}  (median {med:.2f}x, n={len(jumps)})")
-        ax.axvline(med, color=c, linestyle="--", alpha=0.9)
-    ax.axvline(5, color="red", linestyle=":", label="phase-transition threshold (5x)")
-    ax.set_xlabel("4→3 bit error jump ratio (proxy)")
-    ax.set_ylabel("number of layers")
-    ax.set_title("4→3 bit error jump across models")
+def plot_awq_reduction(results: Dict[str, dict], path: Path) -> None:
+    """Grouped bars: AWQ 3-bit error reduction per module family, one group per model."""
+    fams = [m for m in _ORDER if all(m in d["summary"]["module_family"] for d in results.values())]
+    x = np.arange(len(fams))
+    n = len(results)
+    width = 0.8 / max(n, 1)
+    colors = plt.cm.viridis(np.linspace(0.2, 0.75, n))
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    for i, ((slug, d), c) in enumerate(zip(results.items(), colors)):
+        fam = d["summary"]["module_family"]
+        vals = [fam[m].get("mean_awq_reduction_3bit", float("nan")) for m in fams]
+        ax.bar(x + (i - (n - 1) / 2) * width, vals, width, label=slug, color=c)
+    ax.axhline(1.0, color="gray", linestyle="--", alpha=0.6, label="no benefit (RTN)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(fams, rotation=30, ha="right")
+    ax.set_ylabel("mean 3-bit output-error reduction (RTN / AWQ, ×)")
+    ax.set_title("AWQ benefit by module family — across models")
     ax.legend()
     fig.tight_layout()
     fig.savefig(path)
@@ -55,24 +61,28 @@ def plot_jump_distributions(results: Dict[str, dict], path: Path) -> None:
 
 def write_summary_table(results: Dict[str, dict], path: Path) -> str:
     head = (
-        "| Model | Params | Linear layers | Median 4→3 jump | Max jump | "
-        "Layers >5x | κ-vs-jump ρ | Top-κ layer |\n"
+        "| Model | Params | Linear layers | Top-κ layer | "
+        "AWQ reduction `down_proj` | `o_proj` | others | max |\n"
         "|---|---|---|---|---|---|---|---|\n"
     )
     rows = []
     for slug, d in results.items():
         s = d["summary"]
-        pj = s["proxy_jump_4to3"]
-        rho = s["correlations"]["kurtosis_vs_proxy_jump_spearman"][0]
+        fam = s["module_family"]
+        others = np.mean([fam[m]["mean_awq_reduction_3bit"]
+                          for m in fam if m not in ("down_proj", "o_proj")])
         params = d["model_info"]["num_params"] / 1e9
         tk = s["top_kurtosis_layer"]["name"].replace("model.layers.", "L")
         rows.append(
-            f"| {slug} | {params:.2f}B | {d['model_info']['num_linear_analyzed']} | "
-            f"{pj['median']:.2f}x | {pj['max']:.2f}x | {pj['num_above_5x']} | "
-            f"{rho:.3f} | {tk} |"
+            f"| {slug} | {params:.2f}B | {d['model_info']['num_linear_analyzed']} | {tk} | "
+            f"{fam['down_proj']['mean_awq_reduction_3bit']:.2f}x | "
+            f"{fam['o_proj']['mean_awq_reduction_3bit']:.2f}x | "
+            f"{others:.2f}x | {s['awq_reduction_3bit']['max']:.1f}x |"
         )
     table = head + "\n".join(rows) + "\n"
-    path.write_text("# Cross-model diagnostic summary\n\n" + table)
+    path.write_text("# Cross-model AWQ-benefit summary\n\n"
+                    "How much AWQ's activation-aware scaling reduces 3-bit output error, by family.\n\n"
+                    + table)
     return table
 
 
@@ -85,9 +95,9 @@ def main() -> None:
     if not results:
         sys.exit("no JSON files loaded")
 
-    fig_path = REPO / "figures" / "cross_model_jump_distribution.png"
+    fig_path = REPO / "figures" / "cross_model_awq_reduction.png"
     fig_path.parent.mkdir(parents=True, exist_ok=True)
-    plot_jump_distributions(results, fig_path)
+    plot_awq_reduction(results, fig_path)
 
     table = write_summary_table(results, REPO / "results" / "cross_model_summary.md")
     print(table)

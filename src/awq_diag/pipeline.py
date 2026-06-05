@@ -116,7 +116,7 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
             "num_calibration_samples": len(cal_tokens),
             "max_calibration_length": cfg.max_calibration_length,
             "outlier_sigma": cfg.outlier_sigma,
-            "jump_window": [cfg.jump_hi_bit, cfg.jump_lo_bit],
+            "awq_report_bit": cfg.jump_lo_bit,
             "seed": cfg.seed,
             "torch_version": torch.__version__,
             "python": platform.python_version(),
@@ -124,9 +124,6 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
         "model_info": {**model_info, "num_linear_analyzed": len(records)},
         "summary": summary,
         "layers": records,
-        # --- backward-compatible flat views (kept from the original notebook) ---
-        "jump_ratios": {n: records[n]["proxy_jump_4to3"] for n in records},
-        "kurtosis": {n: records[n]["mean_kurtosis"] for n in records},
     }
 
     cfg.results_dir.mkdir(parents=True, exist_ok=True)
@@ -141,12 +138,9 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
         d.mkdir(parents=True, exist_ok=True)
         plotting.plot_saliency_curve(_demo_importance_curves(model, collector), d / "saliency_curve.png")
         plotting.plot_kurtosis_by_layer(records, d / "kurtosis_by_layer.png")
-        plotting.plot_bitwidth_sweep(records, cfg, d / "bitwidth_error_sweep.png")
-        plotting.plot_kurtosis_vs_jump(records, summary, d / "kurtosis_vs_jump_ratio.png")
         plotting.plot_module_family(summary, d / "module_family.png")
-        plotting.plot_proxy_vs_output(records, summary, d / "proxy_vs_output_error.png")
         plotting.plot_awq_reduction(records, summary, d / "awq_reduction.png")
-        n_fig = 7
+        n_fig = 4
         for mtype in ("down_proj", "o_proj"):  # the two highest-kurtosis families
             surf = _importance_surface(model, collector, mtype)
             if surf is not None:
@@ -169,19 +163,10 @@ def run_diagnostic(cfg: DiagConfig, make_figures: bool = True, verbose: bool = T
 
 def _print_headline(result: dict) -> None:
     s = result["summary"]
-    pj = s["proxy_jump_4to3"]
-    rho, p = s["correlations"]["kurtosis_vs_proxy_jump_spearman"]
     tk = s["top_kurtosis_layer"]
     print("\n  ── headline ─────────────────────────────────────────")
-    if "per_bit_step_ratio" in s:
-        pbe = s["per_bit_median_output_error"]
-        sr = s["per_bit_step_ratio"]
-        print("  median output error/bit: " + "  ".join(f"{b}b={pbe[b]:.3f}" for b in pbe))
-        print("  per-bit error ratio (≈4x everywhere = no transition): "
-              + "  ".join(f"{k}={v:.2f}x" for k, v in sr.items()))
-    print(f"  4→3 proxy jump: min {pj['min']:.2f}x  median {pj['median']:.2f}x  "
-          f"max {pj['max']:.2f}x  (>5x: {pj['num_above_5x']})")
-    print(f"  kurtosis vs jump Spearman ρ = {rho:.3f} (p={p:.1e})")
+    pbe = s["per_bit_median_output_error"]
+    print("  median output error/bit: " + "  ".join(f"{b}b={v:.3f}" for b, v in pbe.items()))
     print(f"  highest-kurtosis layer: {tk['name']} (κ={tk['mean_kurtosis']:.2f})")
     if "awq_reduction_3bit" in s:
         ar = s["awq_reduction_3bit"]
@@ -189,6 +174,6 @@ def _print_headline(result: dict) -> None:
         outlier = [fam[m]["mean_awq_reduction_3bit"] for m in ("down_proj", "o_proj") if m in fam]
         other = [fam[m]["mean_awq_reduction_3bit"] for m in fam if m not in ("down_proj", "o_proj")]
         print(f"  AWQ 3-bit error reduction: median {ar['median']:.2f}x  max {ar['max']:.2f}x")
-        print(f"  AWQ helps outlier families most: down_proj/o_proj ~{np.mean(outlier):.2f}x "
+        print(f"  AWQ helps the high-importance families most: down_proj/o_proj ~{np.mean(outlier):.2f}x "
               f"vs others ~{np.mean(other):.2f}x")
     print("  ─────────────────────────────────────────────────────")

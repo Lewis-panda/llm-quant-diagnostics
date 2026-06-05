@@ -81,16 +81,18 @@ families barely move. This is the empirical payoff of the importance notion.
 
 ![awq](figures/Qwen2.5-1.5B/awq_reduction.png)
 
+**Cross-model replication.** The AWQ benefit by module family on both sizes — the protection lands on
+`o_proj`/`down_proj` in each:
+
+![cross](figures/cross_model_awq_reduction.png)
+
 <details>
-<summary>Supporting diagnostics (kurtosis per layer, bit-width error sweep, proxy↔output error)</summary>
+<summary>Supporting diagnostics</summary>
 
-| Kurtosis by layer | Bit-width error sweep |
-|---|---|
-| ![kurtosis](figures/Qwen2.5-1.5B/kurtosis_by_layer.png) | ![sweep](figures/Qwen2.5-1.5B/bitwidth_error_sweep.png) |
+Per layer, kurtosis confirms the salient channels are genuine heavy-tailed outliers (an
+`importance_surface_o_proj` view is also generated per model):
 
-The bit-width sweep is context: low-bit weight-quantization error grows quickly (~4× per bit), which
-is *why* activation-aware protection is worth doing. A `proxy_vs_output_error` figure and an
-`importance_surface_o_proj` view are also generated per model.
+![kurtosis](figures/Qwen2.5-1.5B/kurtosis_by_layer.png)
 </details>
 
 ---

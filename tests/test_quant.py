@@ -4,9 +4,9 @@ from __future__ import annotations
 import torch
 
 from awq_diag.quant import (
-    jump_ratio,
+    awq_channel_scales,
+    awq_dequant_weight,
     output_error_from_accumulators,
-    proxy_error_sweep,
     quantize_weight,
 )
 
@@ -27,17 +27,29 @@ def test_more_bits_means_less_error():
     assert err[8] < err[6] < err[4] < err[3] < err[2]
 
 
-def test_proxy_error_sweep_monotonic():
+def test_awq_alpha0_is_plain_rtn():
+    # alpha=0 -> unit scales -> AWQ reduces exactly to RTN
+    W = torch.randn(32, 64)
+    act = torch.rand(64) + 0.1
+    s = awq_channel_scales(act, alpha=0.0)
+    assert torch.allclose(s, torch.ones_like(s), atol=1e-5)
+    assert torch.allclose(awq_dequant_weight(W, 3, s), quantize_weight(W, 3), atol=1e-6)
+
+
+def test_awq_helps_when_activations_are_skewed():
+    # with one dominant (salient) channel, AWQ scaling should lower the
+    # activation-weighted output error vs plain RTN.
     torch.manual_seed(0)
-    W = torch.randn(64, 128)
-    act = torch.rand(128)
-    errs = proxy_error_sweep(W, act, (8, 6, 4, 3, 2))
-    assert errs[8] < errs[4] < errs[2]
+    W = torch.randn(48, 64)
+    act = torch.rand(64) * 0.1
+    act[7] = 20.0  # a single large/salient channel
+    x = torch.randn(100, 64) * act  # activations dominated by channel 7
 
-
-def test_jump_ratio():
-    errs = {4: 0.01, 3: 0.04}
-    assert abs(jump_ratio(errs, 4, 3) - 4.0) < 1e-9
+    y = x @ W.T
+    rtn = (y - x @ quantize_weight(W, 3).T).pow(2).sum()
+    awq_s = awq_channel_scales(act, alpha=1.0)
+    awq = (y - x @ awq_dequant_weight(W, 3, awq_s).T).pow(2).sum()
+    assert awq < rtn
 
 
 def test_output_error_accumulator():

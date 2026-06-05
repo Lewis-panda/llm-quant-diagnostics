@@ -1,6 +1,8 @@
-# Cross-model diagnostic summary
+# Cross-model AWQ-benefit summary
 
-| Model | Params | Linear layers | Median 4→3 jump | Max jump | Layers >5x | κ-vs-jump ρ | Top-κ layer |
+How much AWQ's activation-aware scaling reduces 3-bit output error, by family.
+
+| Model | Params | Linear layers | Top-κ layer | AWQ reduction `down_proj` | `o_proj` | others | max |
 |---|---|---|---|---|---|---|---|
-| Qwen2.5-0.5B | 0.49B | 168 | 3.85x | 4.06x | 0 | -0.262 | L16.self_attn.o_proj |
-| Qwen2.5-1.5B | 1.54B | 196 | 3.92x | 4.02x | 0 | -0.360 | L1.mlp.down_proj |
+| Qwen2.5-0.5B | 0.49B | 168 | L16.self_attn.o_proj | 2.88x | 1.77x | 1.20x | 28.9x |
+| Qwen2.5-1.5B | 1.54B | 196 | L1.mlp.down_proj | 2.31x | 1.63x | 1.19x | 25.9x |
