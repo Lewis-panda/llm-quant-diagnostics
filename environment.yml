@@ -23,3 +23,4 @@ dependencies:
       - seaborn
       - tqdm
       - pytest
+      - datasets   # only for scripts/perplexity_eval.py (WikiText-2)

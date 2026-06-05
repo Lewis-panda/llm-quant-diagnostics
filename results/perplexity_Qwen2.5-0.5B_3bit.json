@@ -1,0 +1,14 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B",
+  "bit": 3,
+  "group_size": 128,
+  "const_alpha": 0.35,
+  "ppl": {
+    "fp16": 13.11808403006165,
+    "rtn": 51.846910259652496,
+    "const_awq": 27.12152367900447,
+    "search_awq": 27.36635643504057
+  },
+  "search_helps_over_rtn": true,
+  "const_captures_pct": 101.0
+}

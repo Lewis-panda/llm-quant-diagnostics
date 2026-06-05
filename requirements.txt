@@ -12,3 +12,4 @@ matplotlib
 seaborn
 tqdm
 pytest
+datasets   # only needed for scripts/perplexity_eval.py (WikiText-2)

@@ -142,11 +142,13 @@ class AWQErrorCollector:
     """
 
     def __init__(self, model, cfg: DiagConfig, act_scales: Dict[str, torch.Tensor],
-                 alphas=(0.0, 1 / 6, 2 / 6, 0.5, 4 / 6, 5 / 6, 1.0)):
+                 alphas=(0.0, 1 / 6, 2 / 6, 0.5, 4 / 6, 5 / 6, 1.0),
+                 quantizer=quantize_weight):
         self.model = model
         self.cfg = cfg
         self.act_scales = act_scales              # name -> mean|x| per input channel
         self.alphas = tuple(alphas)
+        self.quantizer = quantizer                # base quantizer (per-channel RTN or group-wise)
         # acc[name][bits][alpha] = [sum_num, sum_den]
         self.acc: Dict[str, dict] = {}
         self._handles: List[torch.utils.hooks.RemovableHandle] = []
@@ -169,7 +171,7 @@ class AWQErrorCollector:
             )
             for bits in bit_widths:
                 for a in alphas:
-                    Wq = awq_dequant_weight(W, bits, scale_cache[a])
+                    Wq = awq_dequant_weight(W, bits, scale_cache[a], quantizer=self.quantizer)
                     num = (y - F.linear(x, Wq)).pow(2).sum().item()
                     entry[bits][a][0] += num
                     entry[bits][a][1] += den
