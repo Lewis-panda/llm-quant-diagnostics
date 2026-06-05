@@ -7,8 +7,9 @@
     "fp16": 13.11808403006165,
     "rtn": 51.846910259652496,
     "const_awq": 27.12152367900447,
+    "block_awq": 27.313016118511527,
     "search_awq": 27.36635643504057
   },
-  "search_helps_over_rtn": true,
-  "const_captures_pct": 101.0
+  "awq_helps_over_rtn": true,
+  "const_captures_block_awq_pct": 100.8
 }

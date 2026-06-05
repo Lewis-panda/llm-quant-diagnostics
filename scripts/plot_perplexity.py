@@ -17,7 +17,8 @@ import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
 _STRATS = [("fp16", "fp16", "gray"), ("rtn", "RTN", "indianred"),
-           ("const_awq", "const-α AWQ", "seagreen"), ("search_awq", "search-α AWQ", "steelblue")]
+           ("const_awq", "const-α AWQ", "seagreen"), ("block_awq", "AWQ (block-level)", "darkorange"),
+           ("search_awq", "per-Linear search", "steelblue")]
 
 
 def main() -> None:
@@ -27,17 +28,18 @@ def main() -> None:
     data.sort(key=lambda d: (d["bit"], d["model"]))
     labels = [f"{d['model'].split('/')[-1]}\n{d['bit']}-bit" for d in data]
     x = np.arange(len(data))
-    w = 0.2
+    n = len(_STRATS)
+    w = 0.8 / n
 
-    fig, ax = plt.subplots(figsize=(max(9, 2.2 * len(data)), 6))
+    fig, ax = plt.subplots(figsize=(max(10, 2.6 * len(data)), 6))
     for i, (key, name, color) in enumerate(_STRATS):
-        vals = [d["ppl"][key] for d in data]
-        bars = ax.bar(x + (i - 1.5) * w, vals, w, label=name, color=color)
-        ax.bar_label(bars, fmt="%.1f", fontsize=8, padding=2)
+        vals = [d["ppl"].get(key, float("nan")) for d in data]
+        bars = ax.bar(x + (i - (n - 1) / 2) * w, vals, w, label=name, color=color)
+        ax.bar_label(bars, fmt="%.1f", fontsize=7, padding=2)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("WikiText-2 perplexity (lower = better)")
-    ax.set_title("Search-free AWQ — one global α matches/beats the per-layer search\n"
+    ax.set_title("Search-free AWQ — one global α matches/beats the official-style per-block AWQ\n"
                  "(group-wise asymmetric quant, Qwen2.5)")
     ax.legend()
     fig.tight_layout()

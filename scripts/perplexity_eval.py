@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import defaultdict
 from functools import partial
 from pathlib import Path
 
@@ -30,8 +31,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from awq_diag.config import DiagConfig  # noqa: E402
 from awq_diag.data import get_calibration_texts  # noqa: E402
 from awq_diag.hooks import ActivationCollector, AWQErrorCollector  # noqa: E402
-from awq_diag.model_utils import iter_block_linears, load_model_and_tokenizer, set_seed  # noqa: E402
+from awq_diag.model_utils import (  # noqa: E402
+    iter_block_linears, layer_idx_from_name, load_model_and_tokenizer, module_type_from_name, set_seed)
 from awq_diag.quant import awq_channel_scales, awq_dequant_weight, pseudo_quantize_groupwise  # noqa: E402
+
+# official AWQ shares ONE scale per group of linears that read the same input
+_GROUP = {"q_proj": "attn_in", "k_proj": "attn_in", "v_proj": "attn_in", "o_proj": "attn_out",
+          "gate_proj": "mlp_in", "up_proj": "mlp_in", "down_proj": "mlp_out"}
+
+
+def block_group_alpha(acc: dict, bit: int, alphas) -> dict:
+    """Faithful (block-level) AWQ alpha: one shared alpha per (layer, group), where q/k/v share an
+    input and gate/up share an input. Argmin of the group's summed output error — the official
+    grouping, but using each group's combined linear-output error (robust, no standalone attention).
+    """
+    groups = defaultdict(list)
+    for name in acc:
+        groups[(layer_idx_from_name(name), _GROUP.get(module_type_from_name(name), name))].append(name)
+    out = {}
+    for members in groups.values():
+        errs = {a: sum(acc[m][bit][a][0] for m in members) / max(sum(acc[m][bit][a][1] for m in members), 1e-12)
+                for a in alphas}
+        a_star = min(errs, key=errs.get)
+        for m in members:
+            out[m] = a_star
+    return out
 
 
 @torch.no_grad()
@@ -50,15 +74,15 @@ def eval_ppl(model, enc, device, seq_len=2048, max_windows=None) -> float:
 
 
 @torch.no_grad()
-def quantize_model(model, act_scales, bit, gs, strategy, best_alpha=None, const_alpha=None):
+def quantize_model(model, act_scales, bit, gs, alpha_map=None):
+    """alpha_map=None -> plain RTN; else AWQ-scale each linear by its alpha (per-name)."""
     quantizer = partial(pseudo_quantize_groupwise, group_size=gs, zero_point=True)
     for name, module in iter_block_linears(model):
         Wf = module.weight.data.float()
-        if strategy == "rtn":
+        if alpha_map is None:
             Wq = quantizer(Wf, bit)
         else:
-            a = const_alpha if strategy == "const_awq" else best_alpha[name]
-            s = awq_channel_scales(act_scales[name].to(Wf.device), a)
+            s = awq_channel_scales(act_scales[name].to(Wf.device), alpha_map[name])
             Wq = awq_dequant_weight(Wf, bit, s, quantizer=quantizer)
         module.weight.data.copy_(Wq.to(module.weight.dtype))
 
@@ -119,29 +143,30 @@ def main() -> None:
         for n, m in iter_block_linears(model):
             m.weight.data.copy_(orig[n].to(m.weight.device, m.weight.dtype))
 
+    const_map = {n: const_alpha for n in best_alpha}
+    block_alpha = block_group_alpha(awq.acc, args.bit, alphas)   # faithful block-level AWQ
+
     print("[4/5] evaluating perplexity per strategy ...")
     results = {}
-    strategies = ["fp16", "rtn", "const_awq", "search_awq"]
+    amaps = {"rtn": None, "const_awq": const_map, "block_awq": block_alpha, "search_awq": best_alpha}
+    strategies = ["fp16", "rtn", "const_awq", "block_awq", "search_awq"]
     for strat in strategies:
         restore()
         if strat != "fp16":
-            quantize_model(model, act_scales, args.bit, args.group_size, strat,
-                           best_alpha=best_alpha, const_alpha=const_alpha)
-        ppl = eval_ppl(model, enc, device, args.seq_len, args.max_windows)
-        results[strat] = ppl
-        print(f"      {strat:<12} ppl = {ppl:.3f}")
+            quantize_model(model, act_scales, args.bit, args.group_size, amaps[strat])
+        results[strat] = eval_ppl(model, enc, device, args.seq_len, args.max_windows)
+        print(f"      {strat:<12} ppl = {results[strat]:.3f}")
     restore()
 
     fp16, rtn = results["fp16"], results["rtn"]
-    # how much of search-AWQ's ppl recovery does const-alpha capture? only meaningful when the
-    # per-layer search actually helps over RTN (denominator > ~noise).
-    denom = rtn - results["search_awq"]
+    # how much of faithful block-AWQ's ppl recovery does const-alpha capture? (vs RTN baseline)
+    denom = rtn - results["block_awq"]
     captures = (rtn - results["const_awq"]) / denom * 100 if denom > 0.1 else None
     summary = {
         "model": args.model, "bit": args.bit, "group_size": args.group_size,
         "const_alpha": const_alpha, "ppl": results,
-        "search_helps_over_rtn": bool(denom > 0.1),
-        "const_captures_pct": (round(float(captures), 1) if captures is not None else None),
+        "awq_helps_over_rtn": bool(denom > 0.1),
+        "const_captures_block_awq_pct": (round(float(captures), 1) if captures is not None else None),
     }
     out = Path(__file__).resolve().parents[1] / "results"
     out.mkdir(exist_ok=True)
@@ -153,11 +178,11 @@ def main() -> None:
     for s in strategies:
         print(f"  {s:<12} {results[s]:>9.3f} {results[s]-fp16:>+12.3f}")
     if captures is not None:
-        print(f"\n  const-α AWQ captures {captures:.0f}% of search-AWQ's ppl recovery over RTN "
-              f"(const α={const_alpha}); const {'≤' if results['const_awq']<=results['search_awq'] else '>'} search")
+        print(f"\n  const-α AWQ captures {captures:.0f}% of faithful block-AWQ's recovery over RTN "
+              f"(const α={const_alpha}); const-α {'≤' if results['const_awq']<=results['block_awq'] else '>'} block-AWQ")
     else:
-        print(f"\n  at {args.bit}-bit the per-layer search barely helps over RTN "
-              f"(rtn {rtn:.2f} vs search {results['search_awq']:.2f}); const α={const_alpha}")
+        print(f"\n  at {args.bit}-bit AWQ barely helps over RTN (rtn {rtn:.2f} vs "
+              f"block-AWQ {results['block_awq']:.2f}); const α={const_alpha}")
 
 
 if __name__ == "__main__":
