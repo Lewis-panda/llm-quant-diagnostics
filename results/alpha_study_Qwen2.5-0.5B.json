@@ -1,0 +1,38 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B",
+  "bit": 3,
+  "n_layers": 168,
+  "n_grid": 21,
+  "best_alpha_dist": {
+    "min": 0.0,
+    "median": 0.2,
+    "max": 0.7,
+    "std": 0.13313521633160927
+  },
+  "spearman_best_alpha_vs": {
+    "kurtosis": 0.009955053002110947,
+    "outlier_ratio": 0.10540441318843521,
+    "top1pct_importance": -0.3861504464745258,
+    "act_mag_skew": -0.01150377272333382
+  },
+  "best_predictor": "top1pct_importance",
+  "global_const_alpha": 0.2,
+  "strategies": {
+    "full_search": {
+      "mean_reduction": 1.5791016390735788,
+      "captured": 1.0
+    },
+    "global_const": {
+      "mean_reduction": 1.2002969269342383,
+      "captured": 0.7736615672673745
+    },
+    "predicted": {
+      "mean_reduction": 1.2257291614453123,
+      "captured": 0.7875152405146191
+    },
+    "rtn": {
+      "mean_reduction": 1.0,
+      "captured": 0.0
+    }
+  }
+}

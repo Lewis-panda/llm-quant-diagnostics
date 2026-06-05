@@ -209,3 +209,17 @@ class AWQErrorCollector:
                 "best_alpha": best_alpha,
             }
         return out
+
+    def error_curves(self) -> Dict[str, Dict[int, Dict[float, float]]]:
+        """Full relative-output-error response surface: name -> {bits -> {alpha -> err}}.
+
+        Lets us study *how* error depends on the scaling exponent (not just the argmin),
+        which is what the search-free-AWQ question needs.
+        """
+        out: Dict[str, Dict[int, Dict[float, float]]] = {}
+        for name, per_bit in self.acc.items():
+            out[name] = {
+                bits: {a: num / max(den, 1e-12) for a, (num, den) in per_alpha.items()}
+                for bits, per_alpha in per_bit.items()
+            }
+        return out
