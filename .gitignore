@@ -15,7 +15,6 @@ env/
 venv/
 node_modules/
 .slidev/
-presentation/
 
 # OS / editor
 .DS_Store
